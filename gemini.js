@@ -16,7 +16,7 @@ const Gemini = (function () {
     "gemini-1.5-flash-8b",
   ];
 
-  const SYSTEM_PROMPT = `Return ONLY valid compact JSON. Find the best empty rectangular area for an official stamp/seal on this document page. Avoid text, signatures, tables, images, logos, existing stamps, fields, borders, and handwriting. Prefer designated stamp areas, empty space, and locations near signatures. Use normalized coordinates 0-1.
+  const SYSTEM_PROMPT = `Return ONLY valid compact JSON. Find the best empty rectangular area for an official stamp/seal on the LOWER HALF of this document page only (from the vertical middle y=0.5 down to y=1.0). Avoid text, signatures, tables, images, logos, existing stamps, fields, borders, and handwriting. Prefer designated stamp areas, empty space, and locations near signatures. Use normalized coordinates 0-1.
 
 Return exactly:
 {"found":true,"x":0.0,"y":0.0,"width":0.0,"height":0.0,"confidence":0.0,"reason":""}
@@ -90,7 +90,23 @@ If no safe area:
           throw new Error("Gemini returned an empty response.");
         }
 
-        return parseGeminiResponse(text);
+        const parsed = parseGeminiResponse(text);
+
+        // Enforce the lower-half constraint: y must be at least 0.5.
+        if (parsed.found && typeof parsed.y === "number" && parsed.y < 0.5) {
+          console.warn(`[Gemini] result y=${parsed.y} is above middle; rejecting.`);
+          return {
+            found: false,
+            x: null,
+            y: null,
+            width: null,
+            height: null,
+            confidence: 0,
+            reason: "No suitable empty area found in the lower half of the page.",
+          };
+        }
+
+        return parsed;
       } catch (err) {
         // Network errors or non-404 API errors stop the fallback loop
         // so they can be reported to the user.

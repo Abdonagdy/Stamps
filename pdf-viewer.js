@@ -156,86 +156,132 @@ const PDFViewer = (function () {
   }
 
   class StampEditor {
-    constructor(container, pdfjsDocument, stamp, mergedPageIndex, normalized) {
+    constructor(container, pdfjsDocument, stamp, activePageIndex, placements) {
       this.container = container;
       this.pdfjsDocument = pdfjsDocument;
       this.stamp = stamp;
-      this.mergedPageIndex = mergedPageIndex;
-      this.normalized = { ...normalized };
+      this.activePageIndex = activePageIndex;
+      this.placements = placements.map((p) => ({ ...p }));
+      this.originalPlacements = placements.map((p) => ({ ...p }));
       this.scale = 1.5;
-      this.page = null;
-      this.viewport = null;
-      this.stage = null;
-      this.stampEl = null;
-      this.canvas = null;
+      this.pageWrappers = [];
+      this.viewports = [];
+      this.stampEls = new Map(); // mergedPageIndex -> stamp element
       this.dragState = null;
     }
 
     async render() {
       this.container.innerHTML = "";
-      this.page = await this.pdfjsDocument.getPage(this.mergedPageIndex + 1);
-      this.viewport = this.page.getViewport({ scale: this.scale });
+      this.pageWrappers = [];
+      this.viewports = [];
+      this.stampEls.clear();
 
-      this.stage = document.createElement("div");
-      this.stage.className = "editor-stage";
-      this.stage.style.width = `${this.viewport.width}px`;
-      this.stage.style.height = `${this.viewport.height}px`;
+      const viewer = document.createElement("div");
+      viewer.className = "pdf-viewer";
+      this.container.appendChild(viewer);
 
-      this.canvas = document.createElement("canvas");
-      this.canvas.width = this.viewport.width;
-      this.canvas.height = this.viewport.height;
-      this.stage.appendChild(this.canvas);
+      const numPages = this.pdfjsDocument.numPages;
+      for (let i = 0; i < numPages; i++) {
+        const page = await this.pdfjsDocument.getPage(i + 1);
+        const viewport = page.getViewport({ scale: this.scale });
 
-      await this.page.render({
-        canvasContext: this.canvas.getContext("2d"),
-        viewport: this.viewport,
-      }).promise;
+        const wrapper = document.createElement("div");
+        wrapper.className = "pdf-page-wrapper";
+        wrapper.dataset.pageIndex = i;
 
-      this.stampEl = document.createElement("div");
-      this.stampEl.className = "editor-stamp";
+        const canvas = document.createElement("canvas");
+        canvas.className = "pdf-page-canvas";
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        await page.render({
+          canvasContext: canvas.getContext("2d"),
+          viewport: viewport,
+        }).promise;
+
+        const label = document.createElement("span");
+        label.className = "page-label";
+        label.textContent = `Page ${i + 1}`;
+
+        wrapper.appendChild(canvas);
+        wrapper.appendChild(label);
+        viewer.appendChild(wrapper);
+
+        this.pageWrappers[i] = wrapper;
+        this.viewports[i] = viewport;
+
+        const placement = this.placements.find((p) => p.mergedPageIndex === i);
+        if (placement) {
+          const stampEl = this.createStampElement(i);
+          wrapper.appendChild(stampEl);
+          this.updateStampElementFromNormalized(i, placement);
+          this.attachInteractions(stampEl, i);
+        }
+      }
+    }
+
+    createStampElement(pageIndex) {
+      const stampEl = document.createElement("div");
+      stampEl.className = "editor-stamp";
+      stampEl.dataset.pageIndex = pageIndex;
+
       const img = document.createElement("img");
       img.src = this.stamp.dataUrl;
       img.alt = "Stamp";
-      this.stampEl.appendChild(img);
+      stampEl.appendChild(img);
 
       const handle = document.createElement("div");
       handle.className = "resize-handle";
-      this.stampEl.appendChild(handle);
-      this.stage.appendChild(this.stampEl);
-      this.container.appendChild(this.stage);
+      stampEl.appendChild(handle);
 
-      this.updateStampElementFromNormalized();
-      this.attachInteractions(handle);
+      this.stampEls.set(pageIndex, stampEl);
+      return stampEl;
     }
 
-    updateStampElementFromNormalized() {
-      const x = this.normalized.x * this.viewport.width;
-      const y = this.normalized.y * this.viewport.height;
-      const width = this.normalized.width * this.viewport.width;
-      const height = this.normalized.height * this.viewport.height;
-      this.stampEl.style.left = `${x}px`;
-      this.stampEl.style.top = `${y}px`;
-      this.stampEl.style.width = `${width}px`;
-      this.stampEl.style.height = `${height}px`;
+    getViewport(pageIndex) {
+      return this.viewports[pageIndex];
     }
 
-    getNormalizedFromElement() {
-      const x = parseFloat(this.stampEl.style.left) / this.viewport.width;
-      const y = parseFloat(this.stampEl.style.top) / this.viewport.height;
-      const width = parseFloat(this.stampEl.style.width) / this.viewport.width;
-      const height = parseFloat(this.stampEl.style.height) / this.viewport.height;
+    getWrapper(pageIndex) {
+      return this.pageWrappers[pageIndex];
+    }
+
+    updateStampElementFromNormalized(pageIndex, normalized) {
+      const stampEl = this.stampEls.get(pageIndex);
+      if (!stampEl) return;
+      const viewport = this.getViewport(pageIndex);
+      const x = normalized.x * viewport.width;
+      const y = normalized.y * viewport.height;
+      const width = normalized.width * viewport.width;
+      const height = normalized.height * viewport.height;
+      stampEl.style.left = `${x}px`;
+      stampEl.style.top = `${y}px`;
+      stampEl.style.width = `${width}px`;
+      stampEl.style.height = `${height}px`;
+    }
+
+    getNormalizedFromElement(pageIndex) {
+      const stampEl = this.stampEls.get(pageIndex);
+      if (!stampEl) return null;
+      const viewport = this.getViewport(pageIndex);
+      const x = parseFloat(stampEl.style.left) / viewport.width;
+      const y = parseFloat(stampEl.style.top) / viewport.height;
+      const width = parseFloat(stampEl.style.width) / viewport.width;
+      const height = parseFloat(stampEl.style.height) / viewport.height;
       return { x, y, width, height };
     }
 
-    attachInteractions(handle) {
-      this.stampEl.addEventListener("pointerdown", (e) => this.onDragStart(e));
-      handle.addEventListener("pointerdown", (e) => this.onResizeStart(e));
-      this.stage.addEventListener("pointermove", (e) => this.onPointerMove(e));
+    attachInteractions(stampEl, pageIndex) {
+      const handle = stampEl.querySelector(".resize-handle");
+
+      stampEl.addEventListener("pointerdown", (e) => this.onDragStart(e, pageIndex));
+      handle.addEventListener("pointerdown", (e) => this.onResizeStart(e, pageIndex));
+      this.getWrapper(pageIndex).addEventListener("pointermove", (e) => this.onPointerMove(e));
       window.addEventListener("pointerup", () => this.onPointerUp());
     }
 
-    getPointerPos(e) {
-      const rect = this.stage.getBoundingClientRect();
+    getPointerPos(e, pageIndex) {
+      const rect = this.getWrapper(pageIndex).getBoundingClientRect();
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
       const clientY = e.touches ? e.touches[0].clientY : e.clientY;
       return {
@@ -244,78 +290,97 @@ const PDFViewer = (function () {
       };
     }
 
-    onDragStart(e) {
+    onDragStart(e, pageIndex) {
       if (e.target.classList.contains("resize-handle")) return;
       e.preventDefault();
-      this.stampEl.setPointerCapture(e.pointerId);
+      const stampEl = this.stampEls.get(pageIndex);
+      stampEl.setPointerCapture(e.pointerId);
       this.dragState = {
+        pageIndex,
         type: "drag",
-        startX: this.getPointerPos(e).x,
-        startY: this.getPointerPos(e).y,
-        initialLeft: parseFloat(this.stampEl.style.left),
-        initialTop: parseFloat(this.stampEl.style.top),
+        startX: this.getPointerPos(e, pageIndex).x,
+        startY: this.getPointerPos(e, pageIndex).y,
+        initialLeft: parseFloat(stampEl.style.left),
+        initialTop: parseFloat(stampEl.style.top),
       };
-      this.stampEl.classList.add("is-dragging");
+      stampEl.classList.add("is-dragging");
     }
 
-    onResizeStart(e) {
+    onResizeStart(e, pageIndex) {
       e.preventDefault();
       e.stopPropagation();
-      this.stampEl.setPointerCapture(e.pointerId);
+      const stampEl = this.stampEls.get(pageIndex);
+      stampEl.setPointerCapture(e.pointerId);
       this.dragState = {
+        pageIndex,
         type: "resize",
-        startX: this.getPointerPos(e).x,
-        startY: this.getPointerPos(e).y,
-        initialWidth: parseFloat(this.stampEl.style.width),
-        initialHeight: parseFloat(this.stampEl.style.height),
-        initialLeft: parseFloat(this.stampEl.style.left),
-        initialTop: parseFloat(this.stampEl.style.top),
+        startX: this.getPointerPos(e, pageIndex).x,
+        startY: this.getPointerPos(e, pageIndex).y,
+        initialWidth: parseFloat(stampEl.style.width),
+        initialHeight: parseFloat(stampEl.style.height),
+        initialLeft: parseFloat(stampEl.style.left),
+        initialTop: parseFloat(stampEl.style.top),
       };
-      this.stampEl.classList.add("is-resizing");
+      stampEl.classList.add("is-resizing");
     }
 
     onPointerMove(e) {
       if (!this.dragState) return;
       e.preventDefault();
-      const pos = this.getPointerPos(e);
+      const { pageIndex } = this.dragState;
+      const pos = this.getPointerPos(e, pageIndex);
+      const stampEl = this.stampEls.get(pageIndex);
+      const viewport = this.getViewport(pageIndex);
 
       if (this.dragState.type === "drag") {
         let newLeft = this.dragState.initialLeft + (pos.x - this.dragState.startX);
         let newTop = this.dragState.initialTop + (pos.y - this.dragState.startY);
-        const width = parseFloat(this.stampEl.style.width);
-        const height = parseFloat(this.stampEl.style.height);
-        newLeft = Math.max(0, Math.min(newLeft, this.viewport.width - width));
-        newTop = Math.max(0, Math.min(newTop, this.viewport.height - height));
-        this.stampEl.style.left = `${newLeft}px`;
-        this.stampEl.style.top = `${newTop}px`;
+        const width = parseFloat(stampEl.style.width);
+        const height = parseFloat(stampEl.style.height);
+        newLeft = Math.max(0, Math.min(newLeft, viewport.width - width));
+        newTop = Math.max(0, Math.min(newTop, viewport.height - height));
+        stampEl.style.left = `${newLeft}px`;
+        stampEl.style.top = `${newTop}px`;
       } else if (this.dragState.type === "resize") {
         const deltaX = pos.x - this.dragState.startX;
         const deltaY = pos.y - this.dragState.startY;
         const initialWidth = this.dragState.initialWidth;
         const scaleFactor = Math.max(deltaX / initialWidth, deltaY / (initialWidth / this.stamp.aspectRatio));
         let newWidth = initialWidth * (1 + scaleFactor);
-        newWidth = Math.max(20, Math.min(newWidth, this.viewport.width - this.dragState.initialLeft));
+        newWidth = Math.max(20, Math.min(newWidth, viewport.width - this.dragState.initialLeft));
         let newHeight = newWidth / this.stamp.aspectRatio;
-        newHeight = Math.max(20, Math.min(newHeight, this.viewport.height - this.dragState.initialTop));
+        newHeight = Math.max(20, Math.min(newHeight, viewport.height - this.dragState.initialTop));
         newWidth = newHeight * this.stamp.aspectRatio;
-        this.stampEl.style.width = `${newWidth}px`;
-        this.stampEl.style.height = `${newHeight}px`;
+        stampEl.style.width = `${newWidth}px`;
+        stampEl.style.height = `${newHeight}px`;
       }
     }
 
     onPointerUp() {
       if (!this.dragState) return;
-      this.stampEl.classList.remove("is-dragging", "is-resizing");
+      const stampEl = this.stampEls.get(this.dragState.pageIndex);
+      if (stampEl) {
+        stampEl.classList.remove("is-dragging", "is-resizing");
+      }
       this.dragState = null;
     }
 
-    reset(normalized) {
-      this.normalized = { ...normalized };
-      this.updateStampElementFromNormalized();
+    reset() {
+      this.placements = this.originalPlacements.map((p) => ({ ...p }));
+      this.placements.forEach((p) => {
+        this.updateStampElementFromNormalized(p.mergedPageIndex, p);
+      });
     }
 
     getCurrentNormalized() {
-      return this.getNormalizedFromElement();
+      const result = [];
+      this.placements.forEach((p) => {
+        const updated = this.getNormalizedFromElement(p.mergedPageIndex);
+        if (updated) {
+          result.push({ mergedPageIndex: p.mergedPageIndex, ...updated });
+        }
+      });
+      return result;
     }
   }
 

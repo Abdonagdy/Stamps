@@ -401,28 +401,19 @@
 
   function openStampEditor() {
     showStep("edit");
-    const best = state.bestCandidate;
     state.currentEditor = new PDFViewer.StampEditor(
       els.stampEditorContainer,
       state.merged.mergedPdfjsDocument,
       state.stamp,
-      best.mergedPageIndex,
-      state.placements.find((p) => p.mergedPageIndex === best.mergedPageIndex) || best.result
+      state.bestCandidate.mergedPageIndex,
+      state.placements
     );
     state.currentEditor.render();
   }
 
   async function applyStampChanges() {
     if (!state.currentEditor) return;
-    const newNormalized = state.currentEditor.getCurrentNormalized();
-    const best = state.bestCandidate;
-
-    state.placements = state.placements.map((p) =>
-      p.mergedPageIndex === best.mergedPageIndex
-        ? { mergedPageIndex: best.mergedPageIndex, ...newNormalized }
-        : p
-    );
-
+    state.placements = state.currentEditor.getCurrentNormalized();
     await generateFinalPdf();
     await showReview();
   }
@@ -442,8 +433,8 @@
   els.approveDownload.addEventListener("click", downloadFinalPdf);
   els.editStamp.addEventListener("click", openStampEditor);
   els.resetStamp.addEventListener("click", () => {
-    if (state.currentEditor && state.originalGeminiResult) {
-      state.currentEditor.reset(state.originalGeminiResult);
+    if (state.currentEditor) {
+      state.currentEditor.reset();
     }
   });
   els.cancelEdit.addEventListener("click", showReview);
