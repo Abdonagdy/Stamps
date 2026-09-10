@@ -547,3 +547,79 @@ html, body {
 .hidden {
   display: none !important;
 }
+
+/* Navigation tabs */
+.app-nav {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  background: white;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.nav-tab {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.nav-tab:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.nav-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
+/* Tab contents */
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Signature overlay preview boxes */
+.signature-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.signature-overlay-box {
+  position: absolute;
+  border: 2px dashed var(--success);
+  background: rgba(22, 163, 74, 0.08);
+  color: var(--success);
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 4px;
+}
+
+.stamp-overlay-box {
+  position: absolute;
+  border: 2px dashed var(--primary);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 4px;
+}

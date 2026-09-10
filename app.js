@@ -36,6 +36,29 @@
       review: document.getElementById("step-review"),
       edit: document.getElementById("step-edit"),
     },
+    // Navigation
+    navTabs: document.querySelectorAll(".nav-tab"),
+    tabContents: document.querySelectorAll(".tab-content"),
+    // Signature tab
+    sigPdf: document.getElementById("sig-pdf"),
+    sigSignature: document.getElementById("sig-signature"),
+    sigStamp: document.getElementById("sig-stamp"),
+    sigPdfName: document.getElementById("sig-pdf-name"),
+    sigSignatureName: document.getElementById("sig-signature-name"),
+    sigStampName: document.getElementById("sig-stamp-name"),
+    sigSignaturePreview: document.getElementById("sig-signature-preview"),
+    sigStampPreview: document.getElementById("sig-stamp-preview"),
+    sigSignaturePreviewContainer: document.getElementById("sig-signature-preview-container"),
+    sigStampPreviewContainer: document.getElementById("sig-stamp-preview-container"),
+    sigProcess: document.getElementById("sig-process"),
+    sigPdfViewerContainer: document.getElementById("sig-pdf-viewer-container"),
+    sigReviewInfo: document.getElementById("sig-review-info"),
+    sigDownload: document.getElementById("sig-download"),
+    sigBack: document.getElementById("sig-back"),
+    sigSteps: {
+      upload: document.getElementById("sig-step-upload"),
+      review: document.getElementById("sig-step-review"),
+    },
   };
 
   // Application state
@@ -51,11 +74,36 @@
     currentViewer: null,
     currentEditor: null,
     originalGeminiResult: null,
+    // Signature tab state
+    sig: {
+      pdfFile: null,
+      pdfDoc: null,
+      signatureFile: null,
+      signatureStamp: null,
+      stampFile: null,
+      stampStamp: null,
+      area: null,
+      finalPdfBytes: null,
+    },
   };
 
   function showStep(stepName) {
     Object.values(els.steps).forEach((el) => el.classList.remove("active"));
     els.steps[stepName].classList.add("active");
+  }
+
+  function showSigStep(stepName) {
+    Object.values(els.sigSteps).forEach((el) => el.classList.remove("active"));
+    els.sigSteps[stepName].classList.add("active");
+  }
+
+  function switchTab(tabId) {
+    els.navTabs.forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.tab === tabId);
+    });
+    els.tabContents.forEach((content) => {
+      content.classList.toggle("active", content.id === tabId);
+    });
   }
 
   function updateFileName(element, file) {
@@ -70,6 +118,14 @@
       state.stamp &&
       els.apiKey.value.trim().length > 0;
     els.startProcessing.disabled = !ready;
+  }
+
+  function validateSignatureUploads() {
+    const ready =
+      state.sig.pdfDoc &&
+      state.sig.signatureStamp &&
+      state.sig.stampStamp;
+    els.sigProcess.disabled = !ready;
   }
 
   async function handleFileUpload(key, file) {
@@ -112,6 +168,63 @@
       }
     }
     validateUploads();
+  }
+
+  async function handleSignatureFileUpload(key, file) {
+    if (key === "pdf") {
+      state.sig.pdfFile = file;
+      state.sig.pdfDoc = null;
+      updateFileName(els.sigPdfName, file);
+      validateSignatureUploads();
+      try {
+        const doc = await PDFHandler.loadDocument(file);
+        if (state.sig.pdfFile === file) {
+          state.sig.pdfDoc = doc;
+        }
+      } catch (err) {
+        console.error(err);
+        let message = `Failed to load ${file.name}:\n${err.message}`;
+        if (err.message && err.message.toLowerCase().includes("no pdf header")) {
+          message += `\n\nThis means the file is not a valid PDF. It may be corrupt, password-protected, or its extension was changed.`;
+        }
+        alert(message);
+      }
+    } else if (key === "signature") {
+      state.sig.signatureFile = file;
+      state.sig.signatureStamp = null;
+      updateFileName(els.sigSignatureName, file);
+      els.sigSignaturePreviewContainer.classList.add("hidden");
+      validateSignatureUploads();
+      try {
+        const stamp = await StampEngine.loadStampImage(file);
+        if (state.sig.signatureFile === file) {
+          state.sig.signatureStamp = stamp;
+          els.sigSignaturePreview.src = stamp.dataUrl;
+          els.sigSignaturePreviewContainer.classList.remove("hidden");
+        }
+      } catch (err) {
+        console.error(err);
+        alert(`Failed to load signature ${file.name}: ${err.message}`);
+      }
+    } else if (key === "stamp") {
+      state.sig.stampFile = file;
+      state.sig.stampStamp = null;
+      updateFileName(els.sigStampName, file);
+      els.sigStampPreviewContainer.classList.add("hidden");
+      validateSignatureUploads();
+      try {
+        const stamp = await StampEngine.loadStampImage(file);
+        if (state.sig.stampFile === file) {
+          state.sig.stampStamp = stamp;
+          els.sigStampPreview.src = stamp.dataUrl;
+          els.sigStampPreviewContainer.classList.remove("hidden");
+        }
+      } catch (err) {
+        console.error(err);
+        alert(`Failed to load stamp ${file.name}: ${err.message}`);
+      }
+    }
+    validateSignatureUploads();
   }
 
   function addLog(message, type = "pending") {
@@ -418,6 +531,163 @@
     await showReview();
   }
 
+  async function runSignatureProcess() {
+    if (!state.sig.pdfDoc || !state.sig.signatureStamp || !state.sig.stampStamp) {
+      alert("Please upload the PDF, signature, and stamp first.");
+      return;
+    }
+
+    try {
+      const pdfjsDoc = state.sig.pdfDoc.pdfjsDocument;
+      const pageCount = pdfjsDoc.numPages;
+
+      const candidates = [];
+      for (let i = 0; i < pageCount; i++) {
+        const area = await SignatureEngine.findSignatureArea(pdfjsDoc, i);
+        if (area.found) {
+          candidates.push(area);
+        }
+      }
+
+      if (candidates.length === 0) {
+        alert('Could not find "Signed by the Subconsultant", "Signature" or "توقيع" in the PDF.');
+        return;
+      }
+
+      // Pick the candidate closest to the bottom of its page (smallest y).
+      candidates.sort((a, b) => a.textBounds.y - b.textBounds.y);
+      const area = candidates[0];
+
+      state.sig.area = area;
+      console.log("[Signature] found area:", area);
+
+      // Build a fresh PDF from the original upload.
+      const sourceBytes = state.sig.pdfDoc.bytes.slice();
+      const pdfDoc = await PDFLib.PDFDocument.load(sourceBytes);
+
+      await SignatureEngine.placeSignatureAndStamp(
+        pdfDoc,
+        state.sig.signatureStamp,
+        state.sig.stampStamp,
+        area
+      );
+
+      let pdfBytes = await pdfDoc.save();
+      if (!pdfBytes || pdfBytes.length === 0) {
+        pdfBytes = await pdfDoc.save({ useObjectStreams: false });
+      }
+      if (!pdfBytes || pdfBytes.length === 0) {
+        const base64 = await pdfDoc.saveAsBase64({ dataUri: false });
+        pdfBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      }
+
+      state.sig.finalPdfBytes = pdfBytes;
+
+      if (!state.sig.finalPdfBytes || state.sig.finalPdfBytes.length === 0) {
+        throw new Error("Failed to save the signed PDF.");
+      }
+
+      await showSignatureReview();
+    } catch (err) {
+      console.error(err);
+      alert(`Signature processing failed:\n${err.message}`);
+      showSigStep("upload");
+    }
+  }
+
+  async function showSignatureReview() {
+    showSigStep("review");
+
+    if (!state.sig.finalPdfBytes || state.sig.finalPdfBytes.length === 0) {
+      await runSignatureProcess();
+      return;
+    }
+
+    const viewerDoc = await pdfjsLib.getDocument({
+      data: state.sig.finalPdfBytes.slice(),
+    }).promise;
+
+    els.sigPdfViewerContainer.innerHTML = "";
+    const pageIndex = state.sig.area ? state.sig.area.pageIndex : 0;
+    const page = await viewerDoc.getPage(pageIndex + 1);
+    const scale = 1.5;
+    const viewport = page.getViewport({ scale });
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "pdf-page-wrapper";
+    wrapper.style.position = "relative";
+
+    const canvas = document.createElement("canvas");
+    canvas.className = "pdf-page-canvas";
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    await page.render({
+      canvasContext: canvas.getContext("2d"),
+      viewport: viewport,
+    }).promise;
+
+    wrapper.appendChild(canvas);
+
+    if (state.sig.area) {
+      const overlay = SignatureEngine.createOverlay(state.sig.area, scale);
+      wrapper.appendChild(overlay);
+    }
+
+    els.sigPdfViewerContainer.appendChild(wrapper);
+    els.sigReviewInfo.querySelector("p").textContent = `Large stamp and signature placed on page ${pageIndex + 1}.`;
+  }
+
+  async function downloadSignaturePdf() {
+    if (!state.sig.finalPdfBytes || state.sig.finalPdfBytes.length === 0) {
+      try {
+        await runSignatureProcess();
+      } catch (err) {
+        console.error(err);
+        alert(`Failed to generate the signed PDF:\n${err.message}`);
+        return;
+      }
+    }
+
+    const blob = new Blob([state.sig.finalPdfBytes.buffer || state.sig.finalPdfBytes], {
+      type: "application/pdf",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "signed-document.pdf";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  function resetSignatureTab() {
+    state.sig = {
+      pdfFile: null,
+      pdfDoc: null,
+      signatureFile: null,
+      signatureStamp: null,
+      stampFile: null,
+      stampStamp: null,
+      area: null,
+      finalPdfBytes: null,
+    };
+
+    els.sigPdf.value = "";
+    els.sigSignature.value = "";
+    els.sigStamp.value = "";
+    updateFileName(els.sigPdfName, null);
+    updateFileName(els.sigSignatureName, null);
+    updateFileName(els.sigStampName, null);
+    els.sigSignaturePreviewContainer.classList.add("hidden");
+    els.sigStampPreviewContainer.classList.add("hidden");
+    els.sigPdfViewerContainer.innerHTML = "";
+    els.sigReviewInfo.querySelector("p").textContent = "Large stamp placed next to the label and signature on the right.";
+    validateSignatureUploads();
+    showSigStep("upload");
+  }
+
   function backToUpload() {
     showStep("upload");
   }
@@ -441,4 +711,17 @@
   els.applyChanges.addEventListener("click", applyStampChanges);
   els.backToUploadReview.addEventListener("click", backToUpload);
   els.backToUploadEdit.addEventListener("click", backToUpload);
+
+  // Tab switching
+  els.navTabs.forEach((tab) => {
+    tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+  });
+
+  // Signature tab listeners
+  els.sigPdf.addEventListener("change", (e) => handleSignatureFileUpload("pdf", e.target.files[0]));
+  els.sigSignature.addEventListener("change", (e) => handleSignatureFileUpload("signature", e.target.files[0]));
+  els.sigStamp.addEventListener("change", (e) => handleSignatureFileUpload("stamp", e.target.files[0]));
+  els.sigProcess.addEventListener("click", runSignatureProcess);
+  els.sigDownload.addEventListener("click", downloadSignaturePdf);
+  els.sigBack.addEventListener("click", resetSignatureTab);
 })();

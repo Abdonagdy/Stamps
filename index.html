@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>PDF Stamp Application</title>
-  <link rel="stylesheet" href="style.css?v=1" />
+  <link rel="stylesheet" href="style.css?v=3" />
   <!-- pdf-lib (local) -->
   <script src="pdf-lib.min.js"></script>
   <!-- PDF.js (local) -->
@@ -20,105 +20,163 @@
       <p>Merge three PDFs, analyze PDF 2 &amp; 3 with Gemini, and place your stamp.</p>
     </header>
 
+    <nav class="app-nav">
+      <button class="nav-tab active" data-tab="stamp-tab">Merge &amp; Stamp</button>
+      <button class="nav-tab" data-tab="signature-tab">Signature &amp; Stamp</button>
+    </nav>
+
     <main id="main-content">
-      <!-- STEP 1: Upload Files -->
-      <section id="step-upload" class="step active">
-        <div class="step-header">
-          <span class="step-number">1</span>
-          <h2>Upload Files</h2>
-        </div>
-        <div class="upload-grid">
-          <div class="upload-card">
-            <label for="pdf1">Upload PDF 1</label>
-            <input type="file" id="pdf1" accept="application/pdf" />
-            <span class="file-name" id="pdf1-name">No file selected</span>
+      <!-- TAB 1: Existing Merge & Stamp feature -->
+      <div id="stamp-tab" class="tab-content active">
+        <!-- STEP 1: Upload Files -->
+        <section id="step-upload" class="step active">
+          <div class="step-header">
+            <span class="step-number">1</span>
+            <h2>Upload Files</h2>
           </div>
-          <div class="upload-card">
-            <label for="pdf2">Upload PDF 2</label>
-            <input type="file" id="pdf2" accept="application/pdf" />
-            <span class="file-name" id="pdf2-name">No file selected</span>
-          </div>
-          <div class="upload-card">
-            <label for="pdf3">Upload PDF 3</label>
-            <input type="file" id="pdf3" accept="application/pdf" />
-            <span class="file-name" id="pdf3-name">No file selected</span>
-          </div>
-          <div class="upload-card stamp-card">
-            <label for="stamp">Upload Stamp</label>
-            <input type="file" id="stamp" accept="image/png, image/jpeg, image/jpg" />
-            <span class="file-name" id="stamp-name">No file selected</span>
-            <div id="stamp-preview-container" class="stamp-preview-container hidden">
-              <img id="stamp-preview" alt="Stamp preview" />
+          <div class="upload-grid">
+            <div class="upload-card">
+              <label for="pdf1">Upload PDF 1</label>
+              <input type="file" id="pdf1" accept="application/pdf" />
+              <span class="file-name" id="pdf1-name">No file selected</span>
+            </div>
+            <div class="upload-card">
+              <label for="pdf2">Upload PDF 2</label>
+              <input type="file" id="pdf2" accept="application/pdf" />
+              <span class="file-name" id="pdf2-name">No file selected</span>
+            </div>
+            <div class="upload-card">
+              <label for="pdf3">Upload PDF 3</label>
+              <input type="file" id="pdf3" accept="application/pdf" />
+              <span class="file-name" id="pdf3-name">No file selected</span>
+            </div>
+            <div class="upload-card stamp-card">
+              <label for="stamp">Upload Stamp</label>
+              <input type="file" id="stamp" accept="image/png, image/jpeg, image/jpg" />
+              <span class="file-name" id="stamp-name">No file selected</span>
+              <div id="stamp-preview-container" class="stamp-preview-container hidden">
+                <img id="stamp-preview" alt="Stamp preview" />
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="api-config">
-          <label for="api-key">Gemini API Key</label>
-          <input type="password" id="api-key" placeholder="Enter your Gemini API key" autocomplete="off" />
-          <p class="hint">
-            For development only. In production, route calls through your backend.
+          <div class="api-config">
+            <label for="api-key">Gemini API Key</label>
+            <input type="password" id="api-key" placeholder="Enter your Gemini API key" autocomplete="off" />
+            <p class="hint">
+              For development only. In production, route calls through your backend.
+            </p>
+          </div>
+
+          <div class="options">
+            <label class="checkbox-label">
+              <input type="checkbox" id="stamp-all" />
+              Stamp all suitable pages
+            </label>
+          </div>
+
+          <button id="start-processing" class="btn btn-primary" disabled>Start Processing</button>
+        </section>
+
+        <!-- STEP 2: AI Analysis -->
+        <section id="step-analysis" class="step">
+          <div class="step-header">
+            <span class="step-number">2</span>
+            <h2>AI Analysis</h2>
+          </div>
+          <div class="progress-panel">
+            <div class="spinner"></div>
+            <ul id="analysis-log" class="analysis-log">
+              <li class="pending">Merging documents...</li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- STEP 3: Review Final PDF -->
+        <section id="step-review" class="step">
+          <div class="step-header">
+            <span class="step-number">3</span>
+            <h2>Review Final PDF</h2>
+          </div>
+          <div class="review-info">
+            <p id="review-summary">AI Confidence: --% | Stamp placed on page: --</p>
+          </div>
+          <div id="pdf-viewer-container" class="pdf-viewer-container"></div>
+          <div class="action-bar">
+            <button id="approve-download" class="btn btn-success">Approve &amp; Download</button>
+            <button id="edit-stamp" class="btn btn-secondary">Edit Stamp Position</button>
+            <button id="back-to-upload-review" class="btn btn-danger">Start Over</button>
+          </div>
+        </section>
+
+        <!-- STEP 4: Edit Stamp -->
+        <section id="step-edit" class="step">
+          <div class="step-header">
+            <span class="step-number">4</span>
+            <h2>Edit Stamp Position</h2>
+          </div>
+          <p class="edit-instructions">
+            Drag to move. Drag the resize handle to resize (aspect ratio preserved). Click Apply Changes when done.
           </p>
-        </div>
+          <div id="stamp-editor-container" class="stamp-editor-container"></div>
+          <div class="edit-toolbar">
+            <button id="reset-stamp" class="btn btn-secondary">Reset Position</button>
+            <button id="cancel-edit" class="btn btn-danger">Cancel</button>
+            <button id="apply-changes" class="btn btn-primary">Apply Changes</button>
+            <button id="back-to-upload-edit" class="btn btn-danger">Start Over</button>
+          </div>
+        </section>
+      </div>
 
-        <div class="options">
-          <label class="checkbox-label">
-            <input type="checkbox" id="stamp-all" />
-            Stamp all suitable pages
-          </label>
-        </div>
+      <!-- TAB 2: Signature & Stamp feature -->
+      <div id="signature-tab" class="tab-content">
+        <section id="sig-step-upload" class="step active">
+          <div class="step-header">
+            <span class="step-number">1</span>
+            <h2>Upload PDF, Logo &amp; Stamp</h2>
+          </div>
+          <div class="upload-grid">
+            <div class="upload-card">
+              <label for="sig-pdf">Upload PDF</label>
+              <input type="file" id="sig-pdf" accept="application/pdf" />
+              <span class="file-name" id="sig-pdf-name">No file selected</span>
+            </div>
+            <div class="upload-card">
+              <label for="sig-signature">Upload Signature</label>
+              <input type="file" id="sig-signature" accept="image/png, image/jpeg, image/jpg" />
+              <span class="file-name" id="sig-signature-name">No file selected</span>
+              <div id="sig-signature-preview-container" class="stamp-preview-container hidden">
+                <img id="sig-signature-preview" alt="Signature preview" />
+              </div>
+            </div>
+            <div class="upload-card stamp-card">
+              <label for="sig-stamp">Upload Stamp / Logo</label>
+              <input type="file" id="sig-stamp" accept="image/png, image/jpeg, image/jpg" />
+              <span class="file-name" id="sig-stamp-name">No file selected</span>
+              <div id="sig-stamp-preview-container" class="stamp-preview-container hidden">
+                <img id="sig-stamp-preview" alt="Stamp / Logo preview" />
+              </div>
+            </div>
+          </div>
 
-        <button id="start-processing" class="btn btn-primary" disabled>Start Processing</button>
-      </section>
+          <button id="sig-process" class="btn btn-primary" disabled>Find Placement &amp; Apply</button>
+        </section>
 
-      <!-- STEP 2: AI Analysis -->
-      <section id="step-analysis" class="step">
-        <div class="step-header">
-          <span class="step-number">2</span>
-          <h2>AI Analysis</h2>
-        </div>
-        <div class="progress-panel">
-          <div class="spinner"></div>
-          <ul id="analysis-log" class="analysis-log">
-            <li class="pending">Merging documents...</li>
-          </ul>
-        </div>
-      </section>
-
-      <!-- STEP 3: Review Final PDF -->
-      <section id="step-review" class="step">
-        <div class="step-header">
-          <span class="step-number">3</span>
-          <h2>Review Final PDF</h2>
-        </div>
-        <div class="review-info">
-          <p id="review-summary">AI Confidence: --% | Stamp placed on page: --</p>
-        </div>
-        <div id="pdf-viewer-container" class="pdf-viewer-container"></div>
-        <div class="action-bar">
-          <button id="approve-download" class="btn btn-success">Approve &amp; Download</button>
-          <button id="edit-stamp" class="btn btn-secondary">Edit Stamp Position</button>
-          <button id="back-to-upload-review" class="btn btn-danger">Start Over</button>
-        </div>
-      </section>
-
-      <!-- STEP 4: Edit Stamp -->
-      <section id="step-edit" class="step">
-        <div class="step-header">
-          <span class="step-number">4</span>
-          <h2>Edit Stamp Position</h2>
-        </div>
-        <p class="edit-instructions">
-          Drag to move. Drag the resize handle to resize (aspect ratio preserved). Click Apply Changes when done.
-        </p>
-        <div id="stamp-editor-container" class="stamp-editor-container"></div>
-        <div class="edit-toolbar">
-          <button id="reset-stamp" class="btn btn-secondary">Reset Position</button>
-          <button id="cancel-edit" class="btn btn-danger">Cancel</button>
-          <button id="apply-changes" class="btn btn-primary">Apply Changes</button>
-          <button id="back-to-upload-edit" class="btn btn-danger">Start Over</button>
-        </div>
-      </section>
+        <section id="sig-step-review" class="step">
+          <div class="step-header">
+            <span class="step-number">2</span>
+            <h2>Review &amp; Download</h2>
+          </div>
+          <div id="sig-review-info" class="review-info">
+            <p>Stamp and logo placed next to the "Signed by the Subconsultant" area.</p>
+          </div>
+          <div id="sig-pdf-viewer-container" class="pdf-viewer-container"></div>
+          <div class="action-bar">
+            <button id="sig-download" class="btn btn-success">Download PDF</button>
+            <button id="sig-back" class="btn btn-danger">Start Over</button>
+          </div>
+        </section>
+      </div>
     </main>
 
     <footer class="app-footer">
@@ -127,10 +185,11 @@
   </div>
 
   <!-- Application modules (cache-busted to force latest version) -->
-  <script src="pdf-handler.js?v=24"></script>
+  <script src="pdf-handler.js?v=25"></script>
   <script src="gemini.js?v=24"></script>
-  <script src="stamp-engine.js?v=26"></script>
+  <script src="stamp-engine.js?v=27"></script>
   <script src="pdf-viewer.js?v=24"></script>
-  <script src="app.js?v=24"></script>
+  <script src="signature-engine.js?v=8"></script>
+  <script src="app.js?v=28"></script>
 </body>
 </html>
