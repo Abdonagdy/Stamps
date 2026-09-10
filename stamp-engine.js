@@ -4,9 +4,16 @@
  */
 
 const StampEngine = (function () {
+  function colorDistanceSq(r1, g1, b1, r2, g2, b2) {
+    const dr = r1 - r2;
+    const dg = g1 - g2;
+    const db = b1 - b2;
+    return dr * dr + dg * dg + db * db;
+  }
+
   /**
    * Detect the dominant background color by sampling the four corners.
-   * Returns an object with r, g, b values.
+   * Ignores fully-transparent pixels. Returns an object with r, g, b values.
    */
   function detectBackgroundColor(data, width, height) {
     const corners = [
@@ -16,23 +23,49 @@ const StampEngine = (function () {
       { x: width - 1, y: height - 1 },
     ];
 
-    let r = 0, g = 0, b = 0;
+    let r = 0, g = 0, b = 0, count = 0;
     for (const corner of corners) {
       const i = (corner.y * width + corner.x) * 4;
-      r += data[i];
-      g += data[i + 1];
-      b += data[i + 2];
+      if (data[i + 3] > 0) {
+        r += data[i];
+        g += data[i + 1];
+        b += data[i + 2];
+        count++;
+      }
     }
+
+    if (count === 0) {
+      return { r: 255, g: 255, b: 255 };
+    }
+
     return {
-      r: Math.round(r / corners.length),
-      g: Math.round(g / corners.length),
-      b: Math.round(b / corners.length),
+      r: Math.round(r / count),
+      g: Math.round(g / count),
+      b: Math.round(b / count),
     };
   }
 
   /**
-   * Remove the background from an image by making pixels similar to the
-   * detected background color transparent. The result is always a PNG.
+   * Check whether the image already has a large transparent area.
+   * If most of it is already transparent, we leave it alone to avoid damage.
+   * A small amount of transparency (e.g. anti-aliased edges) is ignored.
+   */
+  function hasLargeTransparency(data) {
+    let transparentPixels = 0;
+    const totalPixels = data.length / 4;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] < 128) {
+        transparentPixels++;
+      }
+    }
+    return transparentPixels / totalPixels > 0.30;
+  }
+
+  /**
+   * Remove only the outer/connected background using flood fill from the edges.
+   * This preserves interior parts of the logo that happen to match the
+   * background color (e.g. white text inside a coloured circle).
+   * The result is always a PNG.
    */
   function removeBackground(sourceDataUrl) {
     return new Promise((resolve, reject) => {
@@ -46,22 +79,60 @@ const StampEngine = (function () {
         ctx.drawImage(img, 0, 0);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
+        const width = canvas.width;
+        const height = canvas.height;
 
-        const bg = detectBackgroundColor(data, canvas.width, canvas.height);
-        // Tolerance: how far a pixel may deviate from the background color
-        // and still be considered background. 0-441 range (sqrt(3*255^2)).
-        const tolerance = 35;
+        // If the image is already mostly transparent, keep it as-is.
+        if (hasLargeTransparency(data)) {
+          resolve(canvas.toDataURL("image/png"));
+          return;
+        }
+
+        const bg = detectBackgroundColor(data, width, height);
+        // Tolerance for background colour matching.
+        const tolerance = 45;
         const toleranceSq = tolerance * tolerance;
 
-        for (let i = 0; i < data.length; i += 4) {
-          const dr = data[i] - bg.r;
-          const dg = data[i + 1] - bg.g;
-          const db = data[i + 2] - bg.b;
-          const distanceSq = dr * dr + dg * dg + db * db;
+        const visited = new Uint8Array(width * height);
+        const stack = [];
 
-          if (distanceSq <= toleranceSq) {
-            data[i + 3] = 0; // make transparent
+        function matchesBackground(x, y) {
+          const i = (y * width + x) * 4;
+          return (
+            data[i + 3] > 0 &&
+            colorDistanceSq(data[i], data[i + 1], data[i + 2], bg.r, bg.g, bg.b) <= toleranceSq
+          );
+        }
+
+        function push(x, y) {
+          if (x < 0 || x >= width || y < 0 || y >= height) return;
+          const idx = y * width + x;
+          if (visited[idx]) return;
+          visited[idx] = 1;
+          if (matchesBackground(x, y)) {
+            stack.push({ x, y });
           }
+        }
+
+        // Seed from all edge pixels.
+        for (let x = 0; x < width; x++) {
+          push(x, 0);
+          push(x, height - 1);
+        }
+        for (let y = 1; y < height - 1; y++) {
+          push(0, y);
+          push(width - 1, y);
+        }
+
+        while (stack.length > 0) {
+          const { x, y } = stack.pop();
+          const i = (y * width + x) * 4;
+          data[i + 3] = 0; // make transparent
+
+          push(x + 1, y);
+          push(x - 1, y);
+          push(x, y + 1);
+          push(x, y - 1);
         }
 
         ctx.putImageData(imageData, 0, 0);
