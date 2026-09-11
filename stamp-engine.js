@@ -12,43 +12,57 @@ const StampEngine = (function () {
   }
 
   /**
-   * Detect the dominant background color by sampling the four corners.
-   * Ignores fully-transparent pixels. Returns an object with r, g, b values.
+   * Detect the dominant background color by sampling pixels along the image border.
+   * This is more robust than corners alone: it handles images with transparent
+   * corners but an opaque background (e.g. a circular stamp saved with a white
+   * square background).
    */
   function detectBackgroundColor(data, width, height) {
-    const corners = [
-      { x: 0, y: 0 },
-      { x: width - 1, y: 0 },
-      { x: 0, y: height - 1 },
-      { x: width - 1, y: height - 1 },
-    ];
+    const colorCounts = new Map();
+    const step = 4; // sample every 4th pixel along the border
 
-    let r = 0, g = 0, b = 0, count = 0;
-    for (const corner of corners) {
-      const i = (corner.y * width + corner.x) * 4;
-      if (data[i + 3] > 0) {
-        r += data[i];
-        g += data[i + 1];
-        b += data[i + 2];
-        count++;
-      }
+    function recordColor(r, g, b) {
+      // Round to the nearest multiple of 8 to group similar colours.
+      const key = `${Math.round(r / 8) * 8},${Math.round(g / 8) * 8},${Math.round(b / 8) * 8}`;
+      colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
     }
 
-    if (count === 0) {
+    // Top and bottom borders.
+    for (let x = 0; x < width; x += step) {
+      const top = (0 * width + x) * 4;
+      const bottom = ((height - 1) * width + x) * 4;
+      if (data[top + 3] > 0) recordColor(data[top], data[top + 1], data[top + 2]);
+      if (data[bottom + 3] > 0) recordColor(data[bottom], data[bottom + 1], data[bottom + 2]);
+    }
+
+    // Left and right borders.
+    for (let y = 0; y < height; y += step) {
+      const left = (y * width + 0) * 4;
+      const right = (y * width + (width - 1)) * 4;
+      if (data[left + 3] > 0) recordColor(data[left], data[left + 1], data[left + 2]);
+      if (data[right + 3] > 0) recordColor(data[right], data[right + 1], data[right + 2]);
+    }
+
+    if (colorCounts.size === 0) {
       return { r: 255, g: 255, b: 255 };
     }
 
-    return {
-      r: Math.round(r / count),
-      g: Math.round(g / count),
-      b: Math.round(b / count),
-    };
+    let bestKey = null;
+    let bestCount = -1;
+    for (const [key, count] of colorCounts) {
+      if (count > bestCount) {
+        bestCount = count;
+        bestKey = key;
+      }
+    }
+
+    const [r, g, b] = bestKey.split(",").map(Number);
+    return { r, g, b };
   }
 
   /**
-   * Check whether the image already has a large transparent area.
-   * If most of it is already transparent, we leave it alone to avoid damage.
-   * A small amount of transparency (e.g. anti-aliased edges) is ignored.
+   * Check whether the image is already mostly transparent.
+   * Only skip processing if more than half the image is transparent.
    */
   function hasLargeTransparency(data) {
     let transparentPixels = 0;
@@ -58,13 +72,14 @@ const StampEngine = (function () {
         transparentPixels++;
       }
     }
-    return transparentPixels / totalPixels > 0.30;
+    return transparentPixels / totalPixels > 0.50;
   }
 
   /**
-   * Remove only the outer/connected background using flood fill from the edges.
-   * This preserves interior parts of the logo that happen to match the
-   * background color (e.g. white text inside a coloured circle).
+   * Remove the detected background colour from the image.
+   * This removes the background everywhere (including isolated patches),
+   * which is more reliable for stamps and signatures that often have a
+   * solid-colour background that may not be cleanly connected to the edges.
    * The result is always a PNG.
    */
   function removeBackground(sourceDataUrl) {
@@ -90,49 +105,17 @@ const StampEngine = (function () {
 
         const bg = detectBackgroundColor(data, width, height);
         // Tolerance for background colour matching.
-        const tolerance = 45;
+        const tolerance = 55;
         const toleranceSq = tolerance * tolerance;
 
-        const visited = new Uint8Array(width * height);
-        const stack = [];
-
-        function matchesBackground(x, y) {
-          const i = (y * width + x) * 4;
-          return (
-            data[i + 3] > 0 &&
-            colorDistanceSq(data[i], data[i + 1], data[i + 2], bg.r, bg.g, bg.b) <= toleranceSq
-          );
-        }
-
-        function push(x, y) {
-          if (x < 0 || x >= width || y < 0 || y >= height) return;
-          const idx = y * width + x;
-          if (visited[idx]) return;
-          visited[idx] = 1;
-          if (matchesBackground(x, y)) {
-            stack.push({ x, y });
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] === 0) continue;
+          const dr = data[i] - bg.r;
+          const dg = data[i + 1] - bg.g;
+          const db = data[i + 2] - bg.b;
+          if (dr * dr + dg * dg + db * db <= toleranceSq) {
+            data[i + 3] = 0; // make transparent
           }
-        }
-
-        // Seed from all edge pixels.
-        for (let x = 0; x < width; x++) {
-          push(x, 0);
-          push(x, height - 1);
-        }
-        for (let y = 1; y < height - 1; y++) {
-          push(0, y);
-          push(width - 1, y);
-        }
-
-        while (stack.length > 0) {
-          const { x, y } = stack.pop();
-          const i = (y * width + x) * 4;
-          data[i + 3] = 0; // make transparent
-
-          push(x + 1, y);
-          push(x - 1, y);
-          push(x, y + 1);
-          push(x, y - 1);
         }
 
         ctx.putImageData(imageData, 0, 0);

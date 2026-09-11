@@ -57,8 +57,14 @@
     sigBack: document.getElementById("sig-back"),
     sigSteps: {
       upload: document.getElementById("sig-step-upload"),
+      edit: document.getElementById("sig-step-edit"),
       review: document.getElementById("sig-step-review"),
     },
+    sigEditorContainer: document.getElementById("sig-editor-container"),
+    sigReset: document.getElementById("sig-reset"),
+    sigApply: document.getElementById("sig-apply"),
+    sigEdit: document.getElementById("sig-edit"),
+    sigEditBack: document.getElementById("sig-edit-back"),
   };
 
   // Application state
@@ -84,6 +90,7 @@
       stampStamp: null,
       area: null,
       finalPdfBytes: null,
+      editor: null,
     },
   };
 
@@ -561,33 +568,7 @@
       state.sig.area = area;
       console.log("[Signature] found area:", area);
 
-      // Build a fresh PDF from the original upload.
-      const sourceBytes = state.sig.pdfDoc.bytes.slice();
-      const pdfDoc = await PDFLib.PDFDocument.load(sourceBytes);
-
-      await SignatureEngine.placeSignatureAndStamp(
-        pdfDoc,
-        state.sig.signatureStamp,
-        state.sig.stampStamp,
-        area
-      );
-
-      let pdfBytes = await pdfDoc.save();
-      if (!pdfBytes || pdfBytes.length === 0) {
-        pdfBytes = await pdfDoc.save({ useObjectStreams: false });
-      }
-      if (!pdfBytes || pdfBytes.length === 0) {
-        const base64 = await pdfDoc.saveAsBase64({ dataUri: false });
-        pdfBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-      }
-
-      state.sig.finalPdfBytes = pdfBytes;
-
-      if (!state.sig.finalPdfBytes || state.sig.finalPdfBytes.length === 0) {
-        throw new Error("Failed to save the signed PDF.");
-      }
-
-      await showSignatureReview();
+      await openSignatureEditor();
     } catch (err) {
       console.error(err);
       alert(`Signature processing failed:\n${err.message}`);
@@ -595,12 +576,89 @@
     }
   }
 
+  async function generateSignaturePdf() {
+    const area = state.sig.editor ? state.sig.editor.getCurrentArea() : state.sig.area;
+    if (!area) throw new Error("No signature placement area available.");
+
+    // Build a fresh PDF from the original upload.
+    const sourceBytes = state.sig.pdfDoc.bytes.slice();
+    const pdfDoc = await PDFLib.PDFDocument.load(sourceBytes);
+
+    await SignatureEngine.placeSignatureAndStamp(
+      pdfDoc,
+      state.sig.signatureStamp,
+      state.sig.stampStamp,
+      area
+    );
+
+    let pdfBytes = await pdfDoc.save();
+    if (!pdfBytes || pdfBytes.length === 0) {
+      pdfBytes = await pdfDoc.save({ useObjectStreams: false });
+    }
+    if (!pdfBytes || pdfBytes.length === 0) {
+      const base64 = await pdfDoc.saveAsBase64({ dataUri: false });
+      pdfBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    }
+
+    state.sig.finalPdfBytes = pdfBytes;
+    state.sig.area = area;
+
+    if (!state.sig.finalPdfBytes || state.sig.finalPdfBytes.length === 0) {
+      throw new Error("Failed to save the signed PDF.");
+    }
+  }
+
+  async function openSignatureEditor() {
+    showSigStep("edit");
+
+    state.sig.editor = new SignatureEditor.Editor(
+      els.sigEditorContainer,
+      state.sig.pdfDoc.pdfjsDocument,
+      state.sig.area.pageIndex,
+      state.sig.signatureStamp,
+      state.sig.stampStamp,
+      state.sig.area
+    );
+    await state.sig.editor.render();
+  }
+
+  async function applySignatureChanges() {
+    if (!state.sig.editor) return;
+    try {
+      await generateSignaturePdf();
+      await showSignatureReview();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to apply changes:\n${err.message}`);
+    }
+  }
+
+  function resetSignatureEditor() {
+    if (state.sig.editor) {
+      state.sig.editor.reset();
+    }
+  }
+
+  async function editSignaturePosition() {
+    if (!state.sig.area) {
+      alert("No signature placement to edit. Please process the PDF first.");
+      return;
+    }
+    await openSignatureEditor();
+  }
+
   async function showSignatureReview() {
     showSigStep("review");
 
     if (!state.sig.finalPdfBytes || state.sig.finalPdfBytes.length === 0) {
-      await runSignatureProcess();
-      return;
+      try {
+        await generateSignaturePdf();
+      } catch (err) {
+        console.error(err);
+        alert(`The final PDF could not be generated:\n${err.message}`);
+        showSigStep("upload");
+        return;
+      }
     }
 
     const viewerDoc = await pdfjsLib.getDocument({
@@ -641,7 +699,7 @@
   async function downloadSignaturePdf() {
     if (!state.sig.finalPdfBytes || state.sig.finalPdfBytes.length === 0) {
       try {
-        await runSignatureProcess();
+        await generateSignaturePdf();
       } catch (err) {
         console.error(err);
         alert(`Failed to generate the signed PDF:\n${err.message}`);
@@ -672,6 +730,7 @@
       stampStamp: null,
       area: null,
       finalPdfBytes: null,
+      editor: null,
     };
 
     els.sigPdf.value = "";
@@ -722,6 +781,10 @@
   els.sigSignature.addEventListener("change", (e) => handleSignatureFileUpload("signature", e.target.files[0]));
   els.sigStamp.addEventListener("change", (e) => handleSignatureFileUpload("stamp", e.target.files[0]));
   els.sigProcess.addEventListener("click", runSignatureProcess);
+  els.sigApply.addEventListener("click", applySignatureChanges);
+  els.sigReset.addEventListener("click", resetSignatureEditor);
+  els.sigEdit.addEventListener("click", editSignaturePosition);
+  els.sigEditBack.addEventListener("click", resetSignatureTab);
   els.sigDownload.addEventListener("click", downloadSignaturePdf);
   els.sigBack.addEventListener("click", resetSignatureTab);
 })();

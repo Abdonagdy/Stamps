@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>PDF Stamp Application</title>
-  <link rel="stylesheet" href="style.css?v=3" />
+  <link rel="stylesheet" href="style.css?v=4" />
   <!-- pdf-lib (local) -->
   <script src="pdf-lib.min.js"></script>
   <!-- PDF.js (local) -->
@@ -162,9 +162,25 @@
           <button id="sig-process" class="btn btn-primary" disabled>Find Placement &amp; Apply</button>
         </section>
 
-        <section id="sig-step-review" class="step">
+        <section id="sig-step-edit" class="step">
           <div class="step-header">
             <span class="step-number">2</span>
+            <h2>Edit Signature &amp; Stamp Position</h2>
+          </div>
+          <p class="edit-instructions">
+            Drag each image to move it. Drag the resize handle to resize (aspect ratio preserved).
+          </p>
+          <div id="sig-editor-container" class="stamp-editor-container"></div>
+          <div class="edit-toolbar">
+            <button id="sig-reset" class="btn btn-secondary">Reset Position</button>
+            <button id="sig-apply" class="btn btn-primary">Apply Changes</button>
+            <button id="sig-edit-back" class="btn btn-danger">Start Over</button>
+          </div>
+        </section>
+
+        <section id="sig-step-review" class="step">
+          <div class="step-header">
+            <span class="step-number">3</span>
             <h2>Review &amp; Download</h2>
           </div>
           <div id="sig-review-info" class="review-info">
@@ -172,6 +188,7 @@
           </div>
           <div id="sig-pdf-viewer-container" class="pdf-viewer-container"></div>
           <div class="action-bar">
+            <button id="sig-edit" class="btn btn-secondary">Edit Position</button>
             <button id="sig-download" class="btn btn-success">Download PDF</button>
             <button id="sig-back" class="btn btn-danger">Start Over</button>
           </div>
@@ -187,9 +204,10 @@
   <!-- Application modules (cache-busted to force latest version) -->
   <script src="pdf-handler.js?v=25"></script>
   <script src="gemini.js?v=24"></script>
-  <script src="stamp-engine.js?v=27"></script>
+  <script src="stamp-engine.js?v=29"></script>
   <script src="pdf-viewer.js?v=24"></script>
   <script src="signature-engine.js?v=8"></script>
-  <script src="app.js?v=28"></script>
+  <script src="signature-editor.js?v=1"></script>
+  <script src="app.js?v=29"></script>
 </body>
 </html>
